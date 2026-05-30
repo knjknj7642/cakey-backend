@@ -337,6 +337,47 @@ def list_orders() -> dict[str, Any]:
     }
 
 
+def _public_order(row: dict[str, str]) -> dict[str, Any]:
+    return {
+        "order_id": row.get("order_id", ""),
+        "saved_at": row.get("saved_at", ""),
+        "status": "saved",
+        "shop_name": row.get("recommended_shop_name", ""),
+        "options": {
+            "size": row.get("size", ""),
+            "shape": row.get("shape", ""),
+            "flavor": row.get("flavor", ""),
+            "style": row.get("style", ""),
+            "mood": row.get("mood", ""),
+            "border": row.get("border", ""),
+            "lettering_type": row.get("lettering_type", ""),
+            "topping": row.get("topping", ""),
+            "color": row.get("color", ""),
+            "cream": row.get("cream", ""),
+            "character": row.get("character", ""),
+            "plate": row.get("plate", ""),
+            "price": row.get("price", ""),
+            "lettering_text": row.get("lettering_text", ""),
+            "extra_request": row.get("extra_request", ""),
+            "character_description": row.get("character_description", ""),
+        },
+        "images": {
+            "recommended_crop_image_url": row.get("recommended_crop_image_url", ""),
+            "recommended_original_image_url": row.get("recommended_original_image_url", ""),
+            "generated_customize_image_url": row.get("generated_customize_image_url", ""),
+            "character_reference_image_url": row.get("character_reference_image_url", ""),
+        },
+    }
+
+
+@router.get("/lookup/{order_id}")
+def get_order(order_id: str) -> dict[str, Any]:
+    row = next((item for item in _read_orders() if item.get("order_id") == order_id), None)
+    if not row:
+        raise HTTPException(status_code=404, detail="order not found")
+    return _public_order(row)
+
+
 def _check_admin_token(token: str | None) -> None:
     admin_token = os.getenv("ADMIN_TOKEN")
     if admin_token and token != admin_token:
