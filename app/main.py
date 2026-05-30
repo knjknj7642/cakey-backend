@@ -11,6 +11,7 @@ from app.customize import router as customize_router
 from app.demo import router as demo_router
 from app.full_mvp import router as full_mvp_router
 from app.models import CakeCrop, CakeCropReview, CropTag
+from app.orders import router as orders_router
 from app.recommender import recommend_cakes
 from app.review import router as review_router
 from app.survey import router as survey_router
@@ -71,6 +72,7 @@ app.include_router(tag_review_router)
 app.include_router(demo_router)
 app.include_router(full_mvp_router)
 app.include_router(survey_router)
+app.include_router(orders_router)
 
 
 @app.get("/health")

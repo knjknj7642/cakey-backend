@@ -7,3 +7,5 @@ openai>=2.38.0
 python-dotenv==1.0.1
 pillow==11.0.0
 python-multipart==0.0.20
+google-api-python-client==2.154.0
+google-auth==2.36.0
