@@ -2,6 +2,7 @@ import csv
 import json
 import mimetypes
 import os
+import urllib.parse
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -237,14 +238,12 @@ def _archive_with_apps_script(order_id: str, payload: OrderPayload) -> dict[str,
             "generatedCustomizeImageUrl": _absolute_url(customization.get("generatedImageUrl")),
         },
     }
-    body = json.dumps(archive_payload).encode("utf-8")
-    request = urllib.request.Request(
-        endpoint,
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
+    query = urllib.parse.urlencode(
+        {"payload": json.dumps(archive_payload, ensure_ascii=False)}
     )
-    with urllib.request.urlopen(request, timeout=45) as response:
+    separator = "&" if "?" in endpoint else "?"
+    request_url = f"{endpoint}{separator}{query}"
+    with urllib.request.urlopen(request_url, timeout=45) as response:
         response_body = response.read().decode("utf-8")
     result = json.loads(response_body)
     if not result.get("ok"):
@@ -260,6 +259,7 @@ def drive_status() -> dict[str, Any]:
         "credentials_path_configured": bool(credentials_path),
         "credentials_file_exists": bool(credentials_path and credentials_path.exists()),
         "json_env_configured": bool(os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")),
+        "archive_web_app_url_configured": bool(os.getenv("ORDER_ARCHIVE_WEB_APP_URL")),
     }
 
 
