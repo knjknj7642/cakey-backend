@@ -43,9 +43,11 @@ ORDER_HEADERS = [
     "recommended_original_image_url",
     "drive_recommended_file_id",
     "drive_recommended_view_url",
+    "drive_recommended_error",
     "generated_customize_image_url",
     "drive_generated_file_id",
     "drive_generated_view_url",
+    "drive_generated_error",
     "character_reference_image_url",
     "user_agent",
 ]
@@ -141,6 +143,8 @@ def _write_order_row(
     payload: OrderPayload,
     drive_generated_result: dict[str, str] | None,
     drive_recommended_result: dict[str, str] | None,
+    drive_generated_error: str = "",
+    drive_recommended_error: str = "",
 ) -> None:
     options = payload.options
     recommendation = payload.recommendation
@@ -174,9 +178,11 @@ def _write_order_row(
         recommendation.get("originalImageUrl", ""),
         drive_recommended_result.get("file_id", "") if drive_recommended_result else "",
         drive_recommended_result.get("view_url", "") if drive_recommended_result else "",
+        drive_recommended_error,
         customization.get("generatedImageUrl", ""),
         drive_generated_result.get("file_id", "") if drive_generated_result else "",
         drive_generated_result.get("view_url", "") if drive_generated_result else "",
+        drive_generated_error,
         customization.get("characterReferenceImageUrl", ""),
         payload.userAgent,
     ]
@@ -209,26 +215,37 @@ def create_order(payload: OrderPayload) -> dict[str, Any]:
 
     drive_recommended_result = None
     drive_generated_result = None
+    drive_recommended_error = ""
+    drive_generated_error = ""
     if recommended_path:
         try:
             drive_recommended_result = _upload_to_drive(recommended_path, order_id, "recommended")
         except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Google Drive recommended upload failed: {exc}") from exc
+            drive_recommended_error = str(exc)
 
     if generated_path:
         try:
             drive_generated_result = _upload_to_drive(generated_path, order_id, "generated")
         except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Google Drive generated upload failed: {exc}") from exc
+            drive_generated_error = str(exc)
 
-    _write_order_row(order_id, payload, drive_generated_result, drive_recommended_result)
+    _write_order_row(
+        order_id,
+        payload,
+        drive_generated_result,
+        drive_recommended_result,
+        drive_generated_error,
+        drive_recommended_error,
+    )
     return {
         "status": "ok",
         "order_id": order_id,
         "drive_recommended_file_id": drive_recommended_result["file_id"] if drive_recommended_result else None,
         "drive_recommended_view_url": drive_recommended_result["view_url"] if drive_recommended_result else None,
+        "drive_recommended_error": drive_recommended_error or None,
         "drive_generated_file_id": drive_generated_result["file_id"] if drive_generated_result else None,
         "drive_generated_view_url": drive_generated_result["view_url"] if drive_generated_result else None,
+        "drive_generated_error": drive_generated_error or None,
     }
 
 
@@ -290,6 +307,7 @@ def orders_admin(token: str | None = Query(default=None)) -> HTMLResponse:
                 <dt>요청</dt><dd>{row.get("extra_request", "") or "없음"}</dd>
                 <dt>Drive 추천</dt><dd><a href="{row.get("drive_recommended_view_url", "#")}" target="_blank" rel="noreferrer">{row.get("drive_recommended_file_id", "") or "없음"}</a></dd>
                 <dt>Drive 생성</dt><dd><a href="{row.get("drive_generated_view_url", "#")}" target="_blank" rel="noreferrer">{row.get("drive_generated_file_id", "") or "없음"}</a></dd>
+                <dt>Drive 오류</dt><dd>{row.get("drive_recommended_error", "") or row.get("drive_generated_error", "") or "없음"}</dd>
               </dl>
             </article>
             """
