@@ -335,6 +335,9 @@ def create_order(payload: OrderPayload) -> dict[str, Any]:
 
 
 def _read_orders() -> list[dict[str, str]]:
+    script_orders = _read_orders_from_apps_script()
+    if script_orders is not None:
+        return script_orders
     remote_orders = _read_orders_from_google_sheet()
     if remote_orders is not None:
         return remote_orders
@@ -391,6 +394,32 @@ def _order_sheet_name() -> str:
     return os.getenv("ORDER_SHEET_NAME") or DEFAULT_ORDER_SHEET_NAME
 
 
+def _read_orders_from_apps_script() -> list[dict[str, str]] | None:
+    endpoint = os.getenv("ORDER_ARCHIVE_WEB_APP_URL")
+    if not endpoint:
+        return None
+
+    payload = {"mode": "list_orders"}
+    query = urllib.parse.urlencode({"payload": json.dumps(payload, ensure_ascii=False)})
+    separator = "&" if "?" in endpoint else "?"
+    request_url = f"{endpoint}{separator}{query}"
+
+    try:
+        with urllib.request.urlopen(request_url, timeout=30) as response:
+            response_body = response.read().decode("utf-8")
+        result = json.loads(response_body)
+    except Exception as exc:
+        print(f"[orders] Apps Script order read skipped: {exc}")
+        return None
+
+    if not result.get("ok"):
+        print(f"[orders] Apps Script order read failed: {result.get('message')}")
+        return None
+
+    orders = result.get("orders") or result.get("results") or []
+    return [_normalize_order_row(order) for order in orders if order.get("order_id")]
+
+
 def _read_orders_from_google_sheet() -> list[dict[str, str]] | None:
     try:
         result = (
@@ -419,13 +448,33 @@ def _read_orders_from_google_sheet() -> list[dict[str, str]] | None:
             for index, header in enumerate(headers)
         }
         normalized = {target: raw.get(source, "") for source, target in ORDER_SHEET_HEADER_MAP.items()}
-        normalized.setdefault("recommended_original_image_url", "")
-        normalized.setdefault("drive_recommended_error", "")
-        normalized.setdefault("drive_generated_error", "")
-        normalized.setdefault("archive_error", "")
+        normalized = _normalize_order_row(normalized)
         if normalized.get("order_id"):
             rows.append(normalized)
     return rows
+
+
+def _normalize_order_row(row: dict[str, Any]) -> dict[str, str]:
+    normalized = {key: str(row.get(key, "") or "") for key in ORDER_HEADERS}
+    for extra_key in [
+        "pickup_date",
+        "pickup_time",
+        "customer_name",
+        "customer_phone",
+        "order_memo",
+    ]:
+        normalized[extra_key] = str(row.get(extra_key, "") or "")
+    normalized["archive_recommended_view_url"] = str(
+        row.get("archive_recommended_view_url")
+        or row.get("drive_recommended_view_url")
+        or ""
+    )
+    normalized["archive_generated_view_url"] = str(
+        row.get("archive_generated_view_url")
+        or row.get("drive_generated_view_url")
+        or ""
+    )
+    return normalized
 
 
 @router.get("")
