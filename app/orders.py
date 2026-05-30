@@ -19,6 +19,7 @@ router = APIRouter(prefix="/orders", tags=["orders"])
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ORDERS_CSV_PATH = PROJECT_ROOT / "data" / "metadata" / "orders.csv"
 DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+DEFAULT_ADMIN_TOKEN = "7642"
 
 ORDER_HEADERS = [
     "order_id",
@@ -378,10 +379,12 @@ def get_order(order_id: str) -> dict[str, Any]:
     return _public_order(row)
 
 
-def _check_admin_token(token: str | None) -> None:
-    admin_token = os.getenv("ADMIN_TOKEN")
-    if admin_token and token != admin_token:
-        raise HTTPException(status_code=401, detail="invalid admin token")
+def _admin_token() -> str:
+    return os.getenv("ADMIN_TOKEN") or DEFAULT_ADMIN_TOKEN
+
+
+def _is_admin_token_valid(token: str | None) -> bool:
+    return token == _admin_token()
 
 
 def _html(value: Any) -> str:
@@ -436,6 +439,11 @@ def _admin_shell(title: str, body: str) -> HTMLResponse:
             dt {{ color: #7f4e69; font-weight: 900; }}
             dd {{ margin: 0; color: #5e5359; overflow-wrap: anywhere; font-weight: 700; }}
             .section-title {{ margin: 24px 0 12px; color: #7f4e69; font-size: 22px; }}
+            .login-card {{ width: min(420px, 100%); margin: 18vh auto 0; padding: 28px; border-radius: 24px; background: white; box-shadow: 0 18px 40px rgba(127, 78, 105, .12); }}
+            .login-card label {{ display: grid; gap: 10px; color: #7f4e69; font-weight: 900; }}
+            .login-card input {{ width: 100%; min-height: 48px; border: 0; border-radius: 16px; padding: 0 14px; background: #f3e3ea; color: #382f35; font: inherit; font-weight: 800; }}
+            .login-card button {{ width: 100%; min-height: 50px; margin-top: 16px; border: 0; border-radius: 999px; background: #7f4e69; color: white; font: inherit; font-weight: 900; cursor: pointer; }}
+            .error {{ color: #b4233c; font-weight: 900; }}
             @media (max-width: 860px) {{
               .order-row {{ grid-template-columns: 1fr; }}
               .topbar {{ display: block; }}
@@ -455,6 +463,27 @@ def _admin_shell(title: str, body: str) -> HTMLResponse:
     )
 
 
+def _admin_login_page(error: bool = False) -> HTMLResponse:
+    error_text = '<p class="error">비밀번호가 맞지 않습니다.</p>' if error else ""
+    return _admin_shell(
+        "CAKEY 관리자 로그인",
+        f"""
+            <section class="login-card">
+              <h1>관리자 확인</h1>
+              <p class="meta">주문 관리를 보려면 비밀번호를 입력하세요.</p>
+              {error_text}
+              <form method="get" action="/orders/admin">
+                <label>
+                  비밀번호
+                  <input name="token" type="password" inputmode="numeric" autocomplete="current-password" autofocus>
+                </label>
+                <button type="submit">관리자 페이지 열기</button>
+              </form>
+            </section>
+        """
+    )
+
+
 def _order_archive_status(row: dict[str, str]) -> tuple[str, str]:
     if row.get("archive_recommended_view_url") or row.get("archive_generated_view_url"):
         return "ok", "보관 완료"
@@ -465,7 +494,8 @@ def _order_archive_status(row: dict[str, str]) -> tuple[str, str]:
 
 @router.get("/admin", response_class=HTMLResponse)
 def orders_admin(token: str | None = Query(default=None)) -> HTMLResponse:
-    _check_admin_token(token)
+    if not _is_admin_token_valid(token):
+        return _admin_login_page(error=bool(token))
     rows = list(reversed(_read_orders()))
     items = []
     for row in rows:
@@ -514,7 +544,8 @@ def orders_admin(token: str | None = Query(default=None)) -> HTMLResponse:
 
 @router.get("/admin/{order_id}", response_class=HTMLResponse)
 def order_admin_detail(order_id: str, token: str | None = Query(default=None)) -> HTMLResponse:
-    _check_admin_token(token)
+    if not _is_admin_token_valid(token):
+        return _admin_login_page(error=bool(token))
     row = next((item for item in _read_orders() if item.get("order_id") == order_id), None)
     if not row:
         raise HTTPException(status_code=404, detail="order not found")
