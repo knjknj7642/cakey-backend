@@ -19,7 +19,10 @@ router = APIRouter(prefix="/orders", tags=["orders"])
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 ORDERS_CSV_PATH = PROJECT_ROOT / "data" / "metadata" / "orders.csv"
 DRIVE_SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+SHEETS_SCOPES = ["https://www.googleapis.com/auth/spreadsheets.readonly"]
 DEFAULT_ADMIN_TOKEN = "7642"
+DEFAULT_ORDER_SPREADSHEET_ID = "1Dwlh8sDwvU3-z2KX37iBAdOLcHYlztXTYwHfgc6-HxE"
+DEFAULT_ORDER_SHEET_NAME = "cakey_주문_아카이브"
 
 ORDER_HEADERS = [
     "order_id",
@@ -79,21 +82,22 @@ def _drive_folder_id() -> str | None:
     return os.getenv("GOOGLE_DRIVE_ORDER_FOLDER_ID")
 
 
-def _load_credentials():
+def _load_credentials(scopes: list[str] | None = None):
     from google.oauth2 import service_account
 
+    requested_scopes = scopes or DRIVE_SCOPES
     credentials_path = _credentials_file()
     if credentials_path and credentials_path.exists():
         return service_account.Credentials.from_service_account_file(
             credentials_path,
-            scopes=DRIVE_SCOPES,
+            scopes=requested_scopes,
         )
 
     raw_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
     if raw_json:
         return service_account.Credentials.from_service_account_info(
             json.loads(raw_json),
-            scopes=DRIVE_SCOPES,
+            scopes=requested_scopes,
         )
 
     raise RuntimeError("Google service account credentials are not configured")
@@ -102,7 +106,13 @@ def _load_credentials():
 def _drive_service():
     from googleapiclient.discovery import build
 
-    return build("drive", "v3", credentials=_load_credentials(), cache_discovery=False)
+    return build("drive", "v3", credentials=_load_credentials(DRIVE_SCOPES), cache_discovery=False)
+
+
+def _sheets_service():
+    from googleapiclient.discovery import build
+
+    return build("sheets", "v4", credentials=_load_credentials(SHEETS_SCOPES), cache_discovery=False)
 
 
 def _local_path_from_static_url(url: str | None) -> Path | None:
@@ -262,6 +272,8 @@ def drive_status() -> dict[str, Any]:
         "credentials_file_exists": bool(credentials_path and credentials_path.exists()),
         "json_env_configured": bool(os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")),
         "archive_web_app_url_configured": bool(os.getenv("ORDER_ARCHIVE_WEB_APP_URL")),
+        "order_spreadsheet_id_configured": bool(_order_spreadsheet_id()),
+        "order_sheet_name": _order_sheet_name(),
     }
 
 
@@ -323,10 +335,97 @@ def create_order(payload: OrderPayload) -> dict[str, Any]:
 
 
 def _read_orders() -> list[dict[str, str]]:
+    remote_orders = _read_orders_from_google_sheet()
+    if remote_orders is not None:
+        return remote_orders
+    return _read_local_orders()
+
+
+def _read_local_orders() -> list[dict[str, str]]:
     if not ORDERS_CSV_PATH.exists():
         return []
     with ORDERS_CSV_PATH.open("r", newline="", encoding="utf-8") as csv_file:
         return list(csv.DictReader(csv_file))
+
+
+ORDER_SHEET_HEADER_MAP = {
+    "저장일시(KST)": "saved_at",
+    "주문번호": "order_id",
+    "페이지": "page_url",
+    "사이즈": "size",
+    "모양": "shape",
+    "맛": "flavor",
+    "스타일": "style",
+    "무드": "mood",
+    "테두리": "border",
+    "레터링 타입": "lettering_type",
+    "토핑": "topping",
+    "색상": "color",
+    "크림 데코": "cream",
+    "캐릭터": "character",
+    "판 레터링": "plate",
+    "가격": "price",
+    "픽업 날짜": "pickup_date",
+    "픽업 시간": "pickup_time",
+    "주문자명": "customer_name",
+    "연락처": "customer_phone",
+    "주문 메모": "order_memo",
+    "문구": "lettering_text",
+    "추가 변경 요청": "extra_request",
+    "캐릭터 설명": "character_description",
+    "추천 crop ID": "recommended_cake_crop_id",
+    "추천 가게명": "recommended_shop_name",
+    "추천 이미지 원본 URL": "recommended_crop_image_url",
+    "AI 생성 이미지 원본 URL": "generated_customize_image_url",
+    "Drive 추천 이미지": "archive_recommended_view_url",
+    "Drive AI 생성 이미지": "archive_generated_view_url",
+    "브라우저": "user_agent",
+}
+
+
+def _order_spreadsheet_id() -> str:
+    return os.getenv("ORDER_SPREADSHEET_ID") or DEFAULT_ORDER_SPREADSHEET_ID
+
+
+def _order_sheet_name() -> str:
+    return os.getenv("ORDER_SHEET_NAME") or DEFAULT_ORDER_SHEET_NAME
+
+
+def _read_orders_from_google_sheet() -> list[dict[str, str]] | None:
+    try:
+        result = (
+            _sheets_service()
+            .spreadsheets()
+            .values()
+            .get(
+                spreadsheetId=_order_spreadsheet_id(),
+                range=f"'{_order_sheet_name()}'",
+            )
+            .execute()
+        )
+    except Exception as exc:
+        print(f"[orders] Google Sheets read skipped: {exc}")
+        return None
+
+    values = result.get("values", [])
+    if len(values) < 2:
+        return []
+
+    headers = values[0]
+    rows: list[dict[str, str]] = []
+    for sheet_row in values[1:]:
+        raw = {
+            header: sheet_row[index] if index < len(sheet_row) else ""
+            for index, header in enumerate(headers)
+        }
+        normalized = {target: raw.get(source, "") for source, target in ORDER_SHEET_HEADER_MAP.items()}
+        normalized.setdefault("recommended_original_image_url", "")
+        normalized.setdefault("drive_recommended_error", "")
+        normalized.setdefault("drive_generated_error", "")
+        normalized.setdefault("archive_error", "")
+        if normalized.get("order_id"):
+            rows.append(normalized)
+    return rows
 
 
 @router.get("")
@@ -361,6 +460,9 @@ def _public_order(row: dict[str, str]) -> dict[str, Any]:
             "lettering_text": row.get("lettering_text", ""),
             "extra_request": row.get("extra_request", ""),
             "character_description": row.get("character_description", ""),
+            "pickup_date": row.get("pickup_date", ""),
+            "pickup_time": row.get("pickup_time", ""),
+            "order_memo": row.get("order_memo", ""),
         },
         "images": {
             "recommended_crop_image_url": row.get("recommended_crop_image_url", ""),
@@ -588,6 +690,11 @@ def order_admin_detail(order_id: str, token: str | None = Query(default=None)) -
         ("캐릭터", row.get("character")),
         ("판 레터링", row.get("plate")),
         ("가격", row.get("price")),
+        ("픽업 날짜", row.get("pickup_date")),
+        ("픽업 시간", row.get("pickup_time")),
+        ("주문자명", row.get("customer_name")),
+        ("연락처", row.get("customer_phone")),
+        ("주문 메모", row.get("order_memo")),
         ("문구", row.get("lettering_text")),
         ("추가 변경 요청", row.get("extra_request")),
         ("캐릭터 설명", row.get("character_description")),
