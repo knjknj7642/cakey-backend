@@ -2,6 +2,7 @@ import csv
 import json
 import mimetypes
 import os
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -48,6 +49,9 @@ ORDER_HEADERS = [
     "drive_generated_file_id",
     "drive_generated_view_url",
     "drive_generated_error",
+    "archive_recommended_view_url",
+    "archive_generated_view_url",
+    "archive_error",
     "character_reference_image_url",
     "user_agent",
 ]
@@ -143,8 +147,10 @@ def _write_order_row(
     payload: OrderPayload,
     drive_generated_result: dict[str, str] | None,
     drive_recommended_result: dict[str, str] | None,
+    archive_result: dict[str, Any] | None,
     drive_generated_error: str = "",
     drive_recommended_error: str = "",
+    archive_error: str = "",
 ) -> None:
     options = payload.options
     recommendation = payload.recommendation
@@ -183,6 +189,9 @@ def _write_order_row(
         drive_generated_result.get("file_id", "") if drive_generated_result else "",
         drive_generated_result.get("view_url", "") if drive_generated_result else "",
         drive_generated_error,
+        archive_result.get("recommendedDriveUrl", "") if archive_result else "",
+        archive_result.get("generatedDriveUrl", "") if archive_result else "",
+        archive_error,
         customization.get("characterReferenceImageUrl", ""),
         payload.userAgent,
     ]
@@ -192,6 +201,55 @@ def _write_order_row(
         if should_write_header:
             writer.writerow(ORDER_HEADERS)
         writer.writerow(row)
+
+
+def _absolute_url(url: str | None) -> str:
+    if not url:
+        return ""
+    if url.startswith("http://") or url.startswith("https://"):
+        return url
+    if url.startswith("/"):
+        return f"https://cakey-backend.onrender.com{url}"
+    return url
+
+
+def _archive_with_apps_script(order_id: str, payload: OrderPayload) -> dict[str, Any] | None:
+    endpoint = os.getenv("ORDER_ARCHIVE_WEB_APP_URL")
+    if not endpoint:
+        return None
+
+    options = payload.options
+    recommendation = payload.recommendation
+    customization = payload.customization
+    archive_payload = {
+        "mode": "order_archive",
+        "orderId": order_id,
+        "pageUrl": payload.pageUrl,
+        "userAgent": payload.userAgent,
+        "order": {
+            **options,
+            "letteringText": customization.get("letteringText", ""),
+            "extraRequest": customization.get("extraRequest", ""),
+            "characterDescription": customization.get("characterDescription", ""),
+            "recommendedCakeCropId": recommendation.get("cakeCropId", ""),
+            "recommendedShopName": recommendation.get("shopName", ""),
+            "recommendedCropImageUrl": _absolute_url(recommendation.get("cropImageUrl")),
+            "generatedCustomizeImageUrl": _absolute_url(customization.get("generatedImageUrl")),
+        },
+    }
+    body = json.dumps(archive_payload).encode("utf-8")
+    request = urllib.request.Request(
+        endpoint,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(request, timeout=45) as response:
+        response_body = response.read().decode("utf-8")
+    result = json.loads(response_body)
+    if not result.get("ok"):
+        raise RuntimeError(result.get("message") or "Apps Script archive failed")
+    return result
 
 
 @router.get("/drive/status")
@@ -215,8 +273,16 @@ def create_order(payload: OrderPayload) -> dict[str, Any]:
 
     drive_recommended_result = None
     drive_generated_result = None
+    archive_result = None
     drive_recommended_error = ""
     drive_generated_error = ""
+    archive_error = ""
+
+    try:
+        archive_result = _archive_with_apps_script(order_id, payload)
+    except Exception as exc:
+        archive_error = str(exc)
+
     if recommended_path:
         try:
             drive_recommended_result = _upload_to_drive(recommended_path, order_id, "recommended")
@@ -234,8 +300,10 @@ def create_order(payload: OrderPayload) -> dict[str, Any]:
         payload,
         drive_generated_result,
         drive_recommended_result,
+        archive_result,
         drive_generated_error,
         drive_recommended_error,
+        archive_error,
     )
     return {
         "status": "ok",
@@ -246,6 +314,9 @@ def create_order(payload: OrderPayload) -> dict[str, Any]:
         "drive_generated_file_id": drive_generated_result["file_id"] if drive_generated_result else None,
         "drive_generated_view_url": drive_generated_result["view_url"] if drive_generated_result else None,
         "drive_generated_error": drive_generated_error or None,
+        "archive_recommended_view_url": archive_result.get("recommendedDriveUrl") if archive_result else None,
+        "archive_generated_view_url": archive_result.get("generatedDriveUrl") if archive_result else None,
+        "archive_error": archive_error or None,
     }
 
 
@@ -307,7 +378,10 @@ def orders_admin(token: str | None = Query(default=None)) -> HTMLResponse:
                 <dt>요청</dt><dd>{row.get("extra_request", "") or "없음"}</dd>
                 <dt>Drive 추천</dt><dd><a href="{row.get("drive_recommended_view_url", "#")}" target="_blank" rel="noreferrer">{row.get("drive_recommended_file_id", "") or "없음"}</a></dd>
                 <dt>Drive 생성</dt><dd><a href="{row.get("drive_generated_view_url", "#")}" target="_blank" rel="noreferrer">{row.get("drive_generated_file_id", "") or "없음"}</a></dd>
+                <dt>보관 추천</dt><dd><a href="{row.get("archive_recommended_view_url", "#")}" target="_blank" rel="noreferrer">{row.get("archive_recommended_view_url", "") or "없음"}</a></dd>
+                <dt>보관 생성</dt><dd><a href="{row.get("archive_generated_view_url", "#")}" target="_blank" rel="noreferrer">{row.get("archive_generated_view_url", "") or "없음"}</a></dd>
                 <dt>Drive 오류</dt><dd>{row.get("drive_recommended_error", "") or row.get("drive_generated_error", "") or "없음"}</dd>
+                <dt>보관 오류</dt><dd>{row.get("archive_error", "") or "없음"}</dd>
               </dl>
             </article>
             """
