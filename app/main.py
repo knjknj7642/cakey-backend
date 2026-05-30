@@ -18,7 +18,9 @@ from app.tag_review import router as tag_review_router
 from app.schemas import RecommendRequest, RecommendResponse
 
 
+print("[cakey-backend] importing app.main", flush=True)
 Base.metadata.create_all(bind=engine)
+print("[cakey-backend] database metadata ready", flush=True)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data"
@@ -30,12 +32,14 @@ for static_dir in [
     DATA_DIR / "reference",
 ]:
     static_dir.mkdir(parents=True, exist_ok=True)
+print("[cakey-backend] static directories ready", flush=True)
 
 app = FastAPI(
     title="Cake Recommendation API",
     description="Tag-based custom cake image recommendation backend.",
     version="0.1.0",
 )
+print("[cakey-backend] FastAPI app created", flush=True)
 
 cors_origins = [
     origin.strip()
