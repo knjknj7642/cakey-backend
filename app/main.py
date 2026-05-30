@@ -42,16 +42,21 @@ app = FastAPI(
 )
 print("[cakey-backend] FastAPI app created", flush=True)
 
-cors_origins = [
+default_cors_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+    "https://knjknj7642.github.io",
+    "https://seewside.github.io",
+]
+
+configured_cors_origins = [
     origin.strip()
-    for origin in os.getenv(
-        "CORS_ORIGINS",
-        "http://localhost:3000,http://127.0.0.1:3000,"
-        "http://localhost:5173,http://127.0.0.1:5173,"
-        "https://knjknj7642.github.io",
-    ).split(",")
+    for origin in os.getenv("CORS_ORIGINS", "").split(",")
     if origin.strip()
 ]
+cors_origins = sorted(set(default_cors_origins + configured_cors_origins))
 
 app.add_middleware(
     CORSMiddleware,
