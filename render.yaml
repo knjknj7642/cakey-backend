@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: cakey-backend
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.5
+      - key: CORS_ORIGINS
+        value: https://knjknj7642.github.io,http://localhost:5173,http://127.0.0.1:5173
+      - key: OPENAI_API_KEY
+        sync: false

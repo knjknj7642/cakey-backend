@@ -1,0 +1,17 @@
+crop_tag_id,cake_crop_id,tag_key,tag_value,confidence,source_type,created_at
+1,1,shape,원형,0.98,manual,2026-01-01T09:20:00
+2,1,dominant_color,핑크,0.95,manual,2026-01-01T09:20:00
+3,1,dominant_color,화이트,0.9,manual,2026-01-01T09:20:00
+4,1,visual_style,러블리,0.93,manual,2026-01-01T09:20:00
+5,1,character_type,개,0.91,manual,2026-01-01T09:20:00
+6,1,lettering_type,중앙레터링,0.88,manual,2026-01-01T09:20:00
+7,2,shape,하트,0.96,manual,2026-01-02T09:20:00
+8,2,dominant_color,블루,0.94,manual,2026-01-02T09:20:00
+9,2,visual_style,심플,0.92,manual,2026-01-02T09:20:00
+10,2,character_type,고양이,0.9,manual,2026-01-02T09:20:00
+11,2,border_type,진주,0.84,manual,2026-01-02T09:20:00
+12,3,shape,원형,0.97,manual,2026-01-03T09:20:00
+13,3,dominant_color,화이트,0.95,manual,2026-01-03T09:20:00
+14,3,visual_style,캐릭터,0.91,manual,2026-01-03T09:20:00
+15,3,character_type,토끼,0.9,manual,2026-01-03T09:20:00
+16,3,topping_decoration,과일,0.85,manual,2026-01-03T09:20:00

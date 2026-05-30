@@ -1,0 +1,4 @@
+cake_crop_id,original_image_id,crop_file_name,crop_file_path,x_min,y_min,x_max,y_max,detection_confidence,created_at
+1,1,onyourday_001_cake_1.jpg,data/crops/onyourday_001_cake_1.jpg,120,80,760,720,0.97,2026-01-01T09:10:00
+2,2,sugarbloom_001_cake_1.jpg,data/crops/sugarbloom_001_cake_1.jpg,90,120,680,740,0.94,2026-01-02T09:10:00
+3,3,studio_001_cake_1.jpg,data/crops/studio_001_cake_1.jpg,140,100,700,690,0.92,2026-01-03T09:10:00

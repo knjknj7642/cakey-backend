@@ -1,0 +1,26 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+.Python
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+env/
+
+# Local/editor files
+.idea/
+.vscode/
+
+# Nested local frontend copy. The deployed frontend lives in a separate repo.
+cakey_front/
+
+# Runtime-only uploads/generated files can be recreated by the app.
+data/reference/
+data/generated/
+
+# Test/cache output
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
