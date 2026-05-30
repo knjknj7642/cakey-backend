@@ -1,11 +1,13 @@
 import csv
 import json
+import mimetypes
 import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 
@@ -39,6 +41,8 @@ ORDER_HEADERS = [
     "recommended_shop_name",
     "recommended_crop_image_url",
     "recommended_original_image_url",
+    "drive_recommended_file_id",
+    "drive_recommended_view_url",
     "generated_customize_image_url",
     "drive_generated_file_id",
     "drive_generated_view_url",
@@ -107,7 +111,7 @@ def _local_path_from_static_url(url: str | None) -> Path | None:
     return None
 
 
-def _upload_to_drive(file_path: Path, order_id: str) -> dict[str, str]:
+def _upload_to_drive(file_path: Path, order_id: str, label: str) -> dict[str, str]:
     from googleapiclient.http import MediaFileUpload
 
     folder_id = _drive_folder_id()
@@ -116,10 +120,11 @@ def _upload_to_drive(file_path: Path, order_id: str) -> dict[str, str]:
 
     service = _drive_service()
     metadata = {
-        "name": f"{order_id}_{file_path.name}",
+        "name": f"{order_id}_{label}_{file_path.name}",
         "parents": [folder_id],
     }
-    media = MediaFileUpload(str(file_path), mimetype="image/webp", resumable=False)
+    media_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+    media = MediaFileUpload(str(file_path), mimetype=media_type, resumable=False)
     uploaded = (
         service.files()
         .create(body=metadata, media_body=media, fields="id,webViewLink")
@@ -134,7 +139,8 @@ def _upload_to_drive(file_path: Path, order_id: str) -> dict[str, str]:
 def _write_order_row(
     order_id: str,
     payload: OrderPayload,
-    drive_result: dict[str, str] | None,
+    drive_generated_result: dict[str, str] | None,
+    drive_recommended_result: dict[str, str] | None,
 ) -> None:
     options = payload.options
     recommendation = payload.recommendation
@@ -166,9 +172,11 @@ def _write_order_row(
         recommendation.get("shopName", ""),
         recommendation.get("cropImageUrl", ""),
         recommendation.get("originalImageUrl", ""),
+        drive_recommended_result.get("file_id", "") if drive_recommended_result else "",
+        drive_recommended_result.get("view_url", "") if drive_recommended_result else "",
         customization.get("generatedImageUrl", ""),
-        drive_result.get("file_id", "") if drive_result else "",
-        drive_result.get("view_url", "") if drive_result else "",
+        drive_generated_result.get("file_id", "") if drive_generated_result else "",
+        drive_generated_result.get("view_url", "") if drive_generated_result else "",
         customization.get("characterReferenceImageUrl", ""),
         payload.userAgent,
     ]
@@ -194,20 +202,136 @@ def drive_status() -> dict[str, Any]:
 @router.post("")
 def create_order(payload: OrderPayload) -> dict[str, Any]:
     order_id = f"cakey_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+    recommended_url = payload.recommendation.get("cropImageUrl")
     generated_url = payload.customization.get("generatedImageUrl")
+    recommended_path = _local_path_from_static_url(recommended_url)
     generated_path = _local_path_from_static_url(generated_url)
 
-    drive_result = None
+    drive_recommended_result = None
+    drive_generated_result = None
+    if recommended_path:
+        try:
+            drive_recommended_result = _upload_to_drive(recommended_path, order_id, "recommended")
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Google Drive recommended upload failed: {exc}") from exc
+
     if generated_path:
         try:
-            drive_result = _upload_to_drive(generated_path, order_id)
+            drive_generated_result = _upload_to_drive(generated_path, order_id, "generated")
         except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"Google Drive upload failed: {exc}") from exc
+            raise HTTPException(status_code=502, detail=f"Google Drive generated upload failed: {exc}") from exc
 
-    _write_order_row(order_id, payload, drive_result)
+    _write_order_row(order_id, payload, drive_generated_result, drive_recommended_result)
     return {
         "status": "ok",
         "order_id": order_id,
-        "drive_generated_file_id": drive_result["file_id"] if drive_result else None,
-        "drive_generated_view_url": drive_result["view_url"] if drive_result else None,
+        "drive_recommended_file_id": drive_recommended_result["file_id"] if drive_recommended_result else None,
+        "drive_recommended_view_url": drive_recommended_result["view_url"] if drive_recommended_result else None,
+        "drive_generated_file_id": drive_generated_result["file_id"] if drive_generated_result else None,
+        "drive_generated_view_url": drive_generated_result["view_url"] if drive_generated_result else None,
     }
+
+
+def _read_orders() -> list[dict[str, str]]:
+    if not ORDERS_CSV_PATH.exists():
+        return []
+    with ORDERS_CSV_PATH.open("r", newline="", encoding="utf-8") as csv_file:
+        return list(csv.DictReader(csv_file))
+
+
+@router.get("")
+def list_orders() -> dict[str, Any]:
+    orders = _read_orders()
+    return {
+        "count": len(orders),
+        "results": list(reversed(orders)),
+    }
+
+
+@router.get("/admin", response_class=HTMLResponse)
+def orders_admin(token: str | None = Query(default=None)) -> HTMLResponse:
+    admin_token = os.getenv("ADMIN_TOKEN")
+    if admin_token and token != admin_token:
+        raise HTTPException(status_code=401, detail="invalid admin token")
+
+    rows = list(reversed(_read_orders()))
+    cards = []
+    for row in rows:
+        reference_url = row.get("recommended_crop_image_url") or ""
+        generated_url = row.get("generated_customize_image_url") or ""
+        if reference_url.startswith("/"):
+            reference_url = reference_url
+        if generated_url.startswith("/"):
+            generated_url = generated_url
+        cards.append(
+            f"""
+            <article class="order-card">
+              <header>
+                <div>
+                  <strong>{row.get("order_id", "")}</strong>
+                  <span>{row.get("saved_at", "")}</span>
+                </div>
+                <a href="{row.get("drive_generated_view_url", "#")}" target="_blank" rel="noreferrer">Drive 생성 이미지</a>
+              </header>
+              <div class="images">
+                <figure>
+                  <img src="{reference_url}" alt="추천 이미지">
+                  <figcaption>추천 이미지</figcaption>
+                </figure>
+                <figure>
+                  <img src="{generated_url}" alt="AI 생성 이미지">
+                  <figcaption>AI 생성 이미지</figcaption>
+                </figure>
+              </div>
+              <dl>
+                <dt>가게</dt><dd>{row.get("recommended_shop_name", "")}</dd>
+                <dt>옵션</dt><dd>{row.get("size", "")} · {row.get("shape", "")} · {row.get("flavor", "")} · {row.get("style", "")} · {row.get("mood", "")}</dd>
+                <dt>장식</dt><dd>{row.get("border", "")} · {row.get("lettering_type", "")} · {row.get("topping", "")} · {row.get("cream", "")}</dd>
+                <dt>요청</dt><dd>{row.get("extra_request", "") or "없음"}</dd>
+                <dt>Drive 추천</dt><dd><a href="{row.get("drive_recommended_view_url", "#")}" target="_blank" rel="noreferrer">{row.get("drive_recommended_file_id", "") or "없음"}</a></dd>
+                <dt>Drive 생성</dt><dd><a href="{row.get("drive_generated_view_url", "#")}" target="_blank" rel="noreferrer">{row.get("drive_generated_file_id", "") or "없음"}</a></dd>
+              </dl>
+            </article>
+            """
+        )
+
+    body = "\n".join(cards) if cards else '<p class="empty">저장된 주문이 아직 없습니다.</p>'
+    return HTMLResponse(
+        f"""
+        <!doctype html>
+        <html lang="ko">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>CAKEY 주문 관리자</title>
+          <style>
+            body {{ margin: 0; background: #fff7fb; color: #382f35; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
+            main {{ width: min(1100px, calc(100% - 32px)); margin: 0 auto; padding: 36px 0 80px; }}
+            h1 {{ margin: 0 0 8px; color: #7f4e69; }}
+            .meta {{ margin: 0 0 28px; color: #75676d; }}
+            .order-card {{ margin: 0 0 24px; padding: 22px; border-radius: 22px; background: white; box-shadow: 0 18px 40px rgba(127, 78, 105, .1); }}
+            .order-card header {{ display: flex; justify-content: space-between; gap: 16px; align-items: center; margin-bottom: 18px; }}
+            .order-card header strong {{ display: block; color: #7f4e69; font-size: 20px; }}
+            .order-card header span {{ color: #75676d; font-size: 13px; }}
+            a {{ color: #7f4e69; font-weight: 800; }}
+            .images {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }}
+            figure {{ margin: 0; }}
+            img {{ width: 100%; aspect-ratio: 1 / 1; object-fit: cover; border-radius: 18px; background: #f1e8ec; }}
+            figcaption {{ margin-top: 8px; text-align: center; color: #75676d; font-weight: 800; }}
+            dl {{ display: grid; grid-template-columns: 100px 1fr; gap: 10px 16px; margin: 18px 0 0; }}
+            dt {{ color: #7f4e69; font-weight: 900; }}
+            dd {{ margin: 0; color: #5e5359; overflow-wrap: anywhere; }}
+            .empty {{ padding: 32px; border-radius: 20px; background: white; }}
+            @media (max-width: 720px) {{ .images {{ grid-template-columns: 1fr; }} .order-card header {{ display: block; }} dl {{ grid-template-columns: 1fr; }} }}
+          </style>
+        </head>
+        <body>
+          <main>
+            <h1>CAKEY 주문 관리자</h1>
+            <p class="meta">총 {len(rows)}건의 주문이 저장되었습니다.</p>
+            {body}
+          </main>
+        </body>
+        </html>
+        """
+    )
