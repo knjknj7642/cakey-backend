@@ -2,6 +2,7 @@ import csv
 import json
 import mimetypes
 import os
+import re
 import urllib.parse
 import urllib.request
 from datetime import datetime
@@ -487,6 +488,8 @@ def list_orders() -> dict[str, Any]:
 
 
 def _public_order(row: dict[str, str]) -> dict[str, Any]:
+    reference_drive = row.get("archive_recommended_view_url") or row.get("drive_recommended_view_url") or ""
+    generated_drive = row.get("archive_generated_view_url") or row.get("drive_generated_view_url") or ""
     return {
         "order_id": row.get("order_id", ""),
         "saved_at": row.get("saved_at", ""),
@@ -514,9 +517,9 @@ def _public_order(row: dict[str, str]) -> dict[str, Any]:
             "order_memo": row.get("order_memo", ""),
         },
         "images": {
-            "recommended_crop_image_url": row.get("recommended_crop_image_url", ""),
+            "recommended_crop_image_url": _durable_image_url(row.get("recommended_crop_image_url"), reference_drive),
             "recommended_original_image_url": row.get("recommended_original_image_url", ""),
-            "generated_customize_image_url": row.get("generated_customize_image_url", ""),
+            "generated_customize_image_url": _durable_image_url(row.get("generated_customize_image_url"), generated_drive),
             "character_reference_image_url": row.get("character_reference_image_url", ""),
         },
     }
@@ -553,6 +556,34 @@ def _image_url(value: str | None) -> str:
     if value.startswith("http://") or value.startswith("https://") or value.startswith("/"):
         return value
     return ""
+
+
+def _drive_file_id(url: str | None) -> str:
+    if not url:
+        return ""
+    patterns = [
+        r"/file/d/([^/]+)",
+        r"[?&]id=([^&]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _drive_thumbnail_url(url: str | None) -> str:
+    file_id = _drive_file_id(url)
+    if not file_id:
+        return ""
+    return f"https://drive.google.com/thumbnail?id={urllib.parse.quote(file_id)}&sz=w1200"
+
+
+def _durable_image_url(local_url: str | None, drive_url: str | None) -> str:
+    drive_thumbnail = _drive_thumbnail_url(drive_url)
+    if drive_thumbnail:
+        return drive_thumbnail
+    return _image_url(local_url)
 
 
 def _admin_shell(title: str, body: str) -> HTMLResponse:
@@ -702,10 +733,10 @@ def order_admin_detail(order_id: str, token: str | None = Query(default=None)) -
         raise HTTPException(status_code=404, detail="order not found")
 
     list_url = _admin_url("/orders/admin", token)
-    reference_url = _image_url(row.get("recommended_crop_image_url"))
-    generated_url = _image_url(row.get("generated_customize_image_url"))
     reference_drive = row.get("archive_recommended_view_url") or row.get("drive_recommended_view_url") or ""
     generated_drive = row.get("archive_generated_view_url") or row.get("drive_generated_view_url") or ""
+    reference_url = _durable_image_url(row.get("recommended_crop_image_url"), reference_drive)
+    generated_url = _durable_image_url(row.get("generated_customize_image_url"), generated_drive)
 
     def image_figure(src: str, label: str) -> str:
         if not src:
